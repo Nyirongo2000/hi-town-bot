@@ -136,6 +136,8 @@ data class MessageBotResponse(
      * The message was handled successfully or not.
      *
      * This shows up as a check or X mark on the message in Hi Town.
+     *
+     * Leaving this field `null` will cause the bot result not to be shown to the user.
      */
     val success: Boolean? = null,
     /**
@@ -169,11 +171,11 @@ data class MessageBotBody(
      */
     val message: String? = null,
     /**
-     * The Hi Town user that sent the message,
+     * The Hi Town user that sent the message.
      */
     val person: Person? = null,
     /**
-     * The Hi Town bot that sent the message,
+     * The Hi Town bot that sent the message.
      */
     val bot: Bot? = null,
 )

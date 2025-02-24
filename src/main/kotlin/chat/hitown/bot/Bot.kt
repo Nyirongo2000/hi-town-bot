@@ -47,7 +47,7 @@ class Bot {
      *
      * Returning false will not allow the bot to be installed.
      */
-    fun validateInstall(
+    suspend fun validateInstall(
         /**
          * The secret as configured by the bot owner when creating the bot in Hi Town.
          */
@@ -57,7 +57,7 @@ class Bot {
     /**
      * Handle the bot being installed in a Hi Town group.
      */
-    fun install(
+    suspend fun install(
         /**
          * The unique token associated with the Hi Town group.
          */
@@ -75,7 +75,7 @@ class Bot {
     /**
      * Handle the bot being reinstalled in a Hi Town group due to config changes made by the group host.
      */
-    fun reinstall(
+    suspend fun reinstall(
         /**
          * The unique token associated with the Hi Town group.
          */
@@ -91,7 +91,7 @@ class Bot {
     /**
      * Handle the bot being uninstalled from a Hi Town group.
      */
-    fun uninstall(
+    suspend fun uninstall(
         /**
          * The unique token associated with the Hi Town group.
          */
@@ -103,7 +103,7 @@ class Bot {
     /**
      * Handle the bot being uninstalled from a Hi Town group.
      */
-    fun message(
+    suspend fun message(
         /**
          * The unique token associated with the Hi Town group.
          */
