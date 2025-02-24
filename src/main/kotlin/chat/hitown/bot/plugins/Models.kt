@@ -178,6 +178,9 @@ data class MessageBotBody(
     val bot: Bot? = null,
 )
 
+/**
+ * A Hi Town bot.
+ */
 @Serializable
 data class Bot(
     var id: String? = null,
