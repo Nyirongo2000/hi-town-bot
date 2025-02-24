@@ -25,9 +25,10 @@ server {
 }
 ```
 
-### 3. Restart Nginx
+### 3. Configure Certbot
 
 ```bash
+certbot --nginx
 service nginx restart
 ```
 
