@@ -172,6 +172,16 @@ data class MessageBotBody(
      * The Hi Town user that sent the message,
      */
     val person: Person? = null,
+    /**
+     * The Hi Town bot that sent the message,
+     */
+    val bot: Bot? = null,
+)
+
+@Serializable
+data class Bot(
+    var id: String? = null,
+    var name: String? = null,
 )
 
 /**
