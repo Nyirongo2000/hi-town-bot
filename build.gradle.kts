@@ -54,4 +54,17 @@ dependencies {
     implementation("io.ktor:ktor-client-serialization:$ktor_version")
     implementation("io.ktor:ktor-client-cio-jvm:$ktor_version")
     implementation("com.charleskorn.kaml:kaml:0.61.0")
+
+    // Added Reddit API client dependencies
+    implementation("io.ktor:ktor-client-logging:$ktor_version")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+
+    // Test dependencies
+    testImplementation("org.jetbrains.kotlin:kotlin-test:$kotlin_version")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5:$kotlin_version")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
