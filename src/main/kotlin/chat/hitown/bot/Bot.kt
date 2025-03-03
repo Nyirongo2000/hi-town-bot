@@ -90,12 +90,17 @@ class Bot {
     private suspend fun fetchRedditPosts(subreddit: String): String {
         try {
             val response = client.get("https://www.reddit.com/r/$subreddit/top.json?limit=10&t=week") {
-                header("User-Agent", "HiTownBot/1.0 (by /u/hitown)")
+                header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
                 header("Accept", "application/json")
+                header("Accept-Language", "en-US,en;q=0.9")
+                header("Connection", "keep-alive")
+                header("Cache-Control", "no-cache")
             }
 
             if (response.status.value !in 200..299) {
-                return "Error: Reddit API returned status ${response.status.value}"
+                println("Reddit API Error: ${response.status.value}")
+                println("Response Headers: ${response.headers}")
+                return "Error: Reddit API returned status ${response.status.value}. Please try again later."
             }
 
             val responseText = response.bodyAsText()
@@ -116,9 +121,22 @@ class Bot {
                     val url = postData?.get("permalink")?.jsonPrimitive?.content
                     val score = postData?.get("score")?.jsonPrimitive?.int
                     val numComments = postData?.get("num_comments")?.jsonPrimitive?.int
+                    val author = postData?.get("author")?.jsonPrimitive?.content
+                    val created = postData?.get("created_utc")?.jsonPrimitive?.long
 
                     if (title != null && url != null && score != null) {
-                        "• $title\n  ↑ $score points | 💬 $numComments comments\n  https://reddit.com$url"
+                        val timeAgo = if (created != null) {
+                            val now = System.currentTimeMillis() / 1000
+                            val diff = now - created
+                            when {
+                                diff < 60 -> "just now"
+                                diff < 3600 -> "${diff / 60}m ago"
+                                diff < 86400 -> "${diff / 3600}h ago"
+                                else -> "${diff / 86400}d ago"
+                            }
+                        } else ""
+                        
+                        "• $title\n  ↑ $score points | 💬 $numComments comments | 👤 $author | ⏰ $timeAgo\n  https://reddit.com$url"
                     } else null
                 } catch (e: Exception) {
                     println("Error parsing post: ${e.message}")
@@ -129,7 +147,7 @@ class Bot {
             return "Top 10 posts this week from r/$subreddit:\n\n$formattedPosts"
         } catch (e: Exception) {
             e.printStackTrace()
-            return "Error fetching posts from Reddit: ${e.message}"
+            return "Error fetching posts from Reddit: ${e.message}. Please try again later."
         }
     }
 
