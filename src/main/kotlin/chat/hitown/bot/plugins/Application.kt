@@ -27,6 +27,11 @@ fun Application.module() {
     }
 
     routing {
+        // Health check endpoint
+        get("/health") {
+            call.respond(HttpStatusCode.OK, mapOf("status" to "healthy"))
+        }
+
         // GET / - Bot Information
         get("/") {
             call.respond(bot.details)
