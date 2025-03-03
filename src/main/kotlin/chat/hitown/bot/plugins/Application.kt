@@ -64,59 +64,89 @@ fun Application.module() {
 
         // POST /install - Bot Installation
         post("/install") {
-            val body = call.receive<InstallBotBody>()
-            val token = java.util.UUID.randomUUID().toString() // Generate a unique token
-            bot.install(token, body)
-            call.respond(InstallBotResponse(token = token))
+            try {
+                val body = call.receive<InstallBotBody>()
+                val token = java.util.UUID.randomUUID().toString()
+                bot.install(token, body)
+                call.respond(InstallBotResponse(token = token))
+            } catch (e: Exception) {
+                call.application.log.error("Install error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
+            }
         }
 
         // POST /reinstall - Update Configuration
         post("/reinstall") {
-            val token = call.request.header("Authorization")?.removePrefix("Bearer ")
-                ?: return@post call.respond(HttpStatusCode.Unauthorized)
+            try {
+                val token = call.request.header("Authorization")?.removePrefix("Bearer ")
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized)
 
-            val body = call.receive<ReinstallBotBody>()
-            body.config?.let { config ->
-                bot.reinstall(token, config)
+                val body = call.receive<ReinstallBotBody>()
+                body.config?.let { config ->
+                    bot.reinstall(token, config)
+                }
+                call.respond(HttpStatusCode.OK)
+            } catch (e: Exception) {
+                call.application.log.error("Reinstall error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
             }
-            call.respond(HttpStatusCode.OK)
         }
 
         // POST /uninstall - Remove Bot
         post("/uninstall") {
-            val token = call.request.header("Authorization")?.removePrefix("Bearer ")
-                ?: return@post call.respond(HttpStatusCode.Unauthorized)
+            try {
+                val token = call.request.header("Authorization")?.removePrefix("Bearer ")
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized)
 
-            bot.uninstall(token)
-            call.respond(HttpStatusCode.OK)
+                bot.uninstall(token)
+                call.respond(HttpStatusCode.OK)
+            } catch (e: Exception) {
+                call.application.log.error("Uninstall error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
+            }
         }
 
         // POST /message - Handle Messages
         post("/message") {
-            val token = call.request.header("Authorization")?.removePrefix("Bearer ")
-                ?: return@post call.respond(HttpStatusCode.Unauthorized)
+            try {
+                val token = call.request.header("Authorization")?.removePrefix("Bearer ")
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized)
 
-            val body = call.receive<MessageBotBody>()
-            val response = bot.message(token, body)
-            call.respond(response)
+                val body = call.receive<MessageBotBody>()
+                val response = bot.message(token, body)
+                call.respond(response)
+            } catch (e: Exception) {
+                call.application.log.error("Message error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
+            }
         }
 
         // POST /pause - Pause Bot
         post("/pause") {
-            val token = call.request.header("Authorization")?.removePrefix("Bearer ")
-                ?: return@post call.respond(HttpStatusCode.Unauthorized)
+            try {
+                val token = call.request.header("Authorization")?.removePrefix("Bearer ")
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized)
 
-            bot.pause(token)
-            call.respond(HttpStatusCode.OK)
+                bot.pause(token)
+                call.respond(HttpStatusCode.OK)
+            } catch (e: Exception) {
+                call.application.log.error("Pause error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
+            }
         }
 
         // POST /resume - Resume Bot
         post("/resume") {
-            val token = call.request.header("Authorization")?.removePrefix("Bearer ")
-                ?: return@post call.respond(HttpStatusCode.Unauthorized)
+            try {
+                val token = call.request.header("Authorization")?.removePrefix("Bearer ")
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized)
 
-            bot.resume(token)
-            call.respond(HttpStatusCode.OK)
+                bot.resume(token)
+                call.respond(HttpStatusCode.OK)
+            } catch (e: Exception) {
+                call.application.log.error("Resume error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
+            }
         }
     }
 }

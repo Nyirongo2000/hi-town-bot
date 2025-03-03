@@ -31,10 +31,25 @@ val bot = Bot()
 class Bot {
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
-            json()
+            json(Json {
+                prettyPrint = true
+                isLenient = true
+                ignoreUnknownKeys = true
+                coerceInputValues = true
+            })
         }
         install(Logging) {
             level = LogLevel.INFO
+        }
+        engine {
+            maxConnectionsCount = 100
+            endpoint {
+                maxConnectionsPerRoute = 100
+                pipelineMaxSize = 20
+                keepAliveTime = 5000
+                connectTimeout = 5000
+                connectAttempts = 5
+            }
         }
     }
 
@@ -45,7 +60,7 @@ class Bot {
         /**
          * Bot name.
          */
-        name = " Hi-Town Reddit Bot",
+        name = "Hi-Town Reddit Bot",
         /**
          * Bot description.
          */
@@ -164,27 +179,41 @@ class Bot {
                 header("User-Agent", "HiTownBot/1.0")
             }
 
-            val jsonResponse = Json.parseToJsonElement(response.bodyAsText()).jsonObject
-            val posts = jsonResponse["data"]?.jsonObject?.get("children")?.jsonArray
+            if (response.status.value !in 200..299) {
+                return "Error: Reddit API returned status ${response.status.value}"
+            }
+
+            val responseText = response.bodyAsText()
+            println("Reddit API Response: $responseText") // Debug log
+            
+            val jsonResponse = Json.parseToJsonElement(responseText)
+            val data = jsonResponse.jsonObject["data"]?.jsonObject
+            val posts = data?.get("children")?.jsonArray
 
             if (posts == null || posts.isEmpty()) {
                 return "No posts found in r/$subreddit"
             }
 
             val formattedPosts = posts.mapNotNull { post ->
-                val data = post.jsonObject["data"]?.jsonObject
-                val title = data?.get("title")?.jsonPrimitive?.content
-                val url = data?.get("permalink")?.jsonPrimitive?.content
-                val score = data?.get("score")?.jsonPrimitive?.int
-                val numComments = data?.get("num_comments")?.jsonPrimitive?.int
+                try {
+                    val postData = post.jsonObject["data"]?.jsonObject
+                    val title = postData?.get("title")?.jsonPrimitive?.content
+                    val url = postData?.get("permalink")?.jsonPrimitive?.content
+                    val score = postData?.get("score")?.jsonPrimitive?.int
+                    val numComments = postData?.get("num_comments")?.jsonPrimitive?.int
 
-                if (title != null && url != null && score != null) {
-                    "• $title\n  ↑ $score points | 💬 $numComments comments\n  https://reddit.com$url"
-                } else null
+                    if (title != null && url != null && score != null) {
+                        "• $title\n  ↑ $score points | 💬 $numComments comments\n  https://reddit.com$url"
+                    } else null
+                } catch (e: Exception) {
+                    println("Error parsing post: ${e.message}") // Debug log
+                    null
+                }
             }.joinToString("\n\n")
 
             return "Top 10 posts this week from r/$subreddit:\n\n$formattedPosts"
         } catch (e: Exception) {
+            e.printStackTrace() // Add this for debugging
             return "Error fetching posts from Reddit: ${e.message}"
         }
     }
@@ -196,43 +225,51 @@ class Bot {
         token: String,
         body: MessageBotBody,
     ): MessageBotResponse {
-        // Check if bot is paused for this group
-        if (pausedGroups.contains(token)) {
-            return MessageBotResponse(
+        try {
+            // Check if bot is paused for this group
+            if (pausedGroups.contains(token)) {
+                return MessageBotResponse(
+                    success = false,
+                    note = "Bot is currently paused in this group"
+                )
+            }
+
+            val message = body.message ?: return MessageBotResponse(
                 success = false,
-                note = "Bot is currently paused in this group"
+                note = "No message provided"
             )
-        }
 
-        val message = body.message ?: return MessageBotResponse(
-            success = false,
-            note = "No message provided"
-        )
+            if (!message.startsWith("!reddit")) {
+                return MessageBotResponse(
+                    success = false,
+                    note = "Not a Reddit command"
+                )
+            }
 
-        if (!message.startsWith("!reddit")) {
+            val parts = message.split(" ")
+            val subreddit = if (parts.size > 1) {
+                parts[1].trim()
+            } else {
+                // Use default subreddit from config if available
+                groupConfigs[token]?.find { it.key == "subreddit" }?.value ?: "programming"
+            }
+
+            val redditContent = fetchRedditPosts(subreddit)
+
             return MessageBotResponse(
-                success = false,
-                note = "Not a Reddit command"
-            )
-        }
-
-        val parts = message.split(" ")
-        val subreddit = if (parts.size > 1) {
-            parts[1].trim()
-        } else {
-            // Use default subreddit from config if available
-            groupConfigs[token]?.find { it.key == "subreddit" }?.value ?: "programming"
-        }
-
-        val redditContent = fetchRedditPosts(subreddit)
-
-        return MessageBotResponse(
-            success = true,
-            actions = listOf(
-                BotAction(
-                    message = redditContent
+                success = true,
+                actions = listOf(
+                    BotAction(
+                        message = redditContent
+                    )
                 )
             )
-        )
+        } catch (e: Exception) {
+            e.printStackTrace() // Add this for debugging
+            return MessageBotResponse(
+                success = false,
+                note = "Error processing message: ${e.message}"
+            )
+        }
     }
 }
