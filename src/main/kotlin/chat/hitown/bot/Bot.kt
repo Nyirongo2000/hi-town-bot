@@ -24,33 +24,11 @@ import io.ktor.client.statement.*
 import kotlinx.serialization.json.*
 import kotlinx.serialization.Serializable
 import kotlinx.coroutines.*
-import java.io.File
-
-private const val INSTALL_SECRET = "hitownbot"
-private const val CONTEXT_SIZE = 7
 
 /**
  * Bot instance.
  */
 val bot = Bot()
-
-@Serializable
-enum class MessageContextRole(val value: String) {
-    User("user"),
-    Assistant("assistant"),
-}
-
-@Serializable
-data class MessageContext(
-    val role: MessageContextRole,
-    val body: MessageBotBody,
-)
-
-@Serializable
-data class GroupInstall(
-    val body: InstallBotBody,
-    val context: List<MessageContext>,
-)
 
 class Bot {
     private val client = HttpClient(CIO) {
@@ -74,33 +52,6 @@ class Bot {
                 connectTimeout = 5000
                 connectAttempts = 5
             }
-        }
-    }
-
-    val groupInstalls = mutableMapOf<String, GroupInstall>()
-    private val saveFile = File("./bot_state.json")
-
-    init {
-        loadState()
-    }
-
-    private fun loadState() {
-        try {
-            if (saveFile.exists()) {
-                val state = Json.decodeFromString<Map<String, GroupInstall>>(saveFile.readText())
-                groupInstalls.clear()
-                groupInstalls.putAll(state)
-            }
-        } catch (e: Exception) {
-            println("Error loading state: ${e.message}")
-        }
-    }
-
-    private fun saveState() {
-        try {
-            saveFile.writeText(Json.encodeToString(groupInstalls))
-        } catch (e: Exception) {
-            println("Error saving state: ${e.message}")
         }
     }
 
@@ -135,34 +86,6 @@ class Bot {
             )
         )
     )
-
-    fun validateInstall(secret: String?): Boolean {
-        return secret == INSTALL_SECRET
-    }
-
-    fun install(token: String, body: InstallBotBody) {
-        groupInstalls[token] = GroupInstall(
-            body = body,
-            context = emptyList()
-        )
-        saveState()
-    }
-
-    fun reinstall(token: String, config: List<BotConfigValue>) {
-        if (token in groupInstalls) {
-            groupInstalls[token] = groupInstalls[token]!!.copy(
-                body = groupInstalls[token]!!.body.copy(
-                    config = config
-                )
-            )
-            saveState()
-        }
-    }
-
-    fun uninstall(token: String) {
-        groupInstalls.remove(token)
-        saveState()
-    }
 
     private suspend fun fetchRedditPosts(subreddit: String): String {
         try {
@@ -215,27 +138,6 @@ class Bot {
      */
     suspend fun message(token: String, body: MessageBotBody): MessageBotResponse {
         try {
-            val groupInstall = groupInstalls[token] ?: return MessageBotResponse(
-                success = false,
-                note = "The bot is not installed in this group."
-            )
-
-            // Create a new mutable list for the context
-            val newContext = groupInstall.context.toMutableList()
-
-            // Save message to context
-            newContext.add(
-                MessageContext(
-                    role = MessageContextRole.User,
-                    body = body
-                )
-            )
-
-            // Keep context size limited
-            if (newContext.size > CONTEXT_SIZE) {
-                newContext.removeFirst()
-            }
-
             val message = body.message ?: return MessageBotResponse(
                 success = false,
                 note = "No message provided"
@@ -252,22 +154,10 @@ class Bot {
             val subreddit = if (parts.size > 1) {
                 parts[1].trim()
             } else {
-                groupInstall.body.config?.find { it.key == "subreddit" }?.value ?: "programming"
+                "programming" // Default subreddit
             }
 
             val redditContent = fetchRedditPosts(subreddit)
-
-            // Save bot response to context
-            newContext.add(
-                MessageContext(
-                    role = MessageContextRole.Assistant,
-                    body = MessageBotBody(message = redditContent)
-                )
-            )
-
-            // Update the group install with new context
-            groupInstalls[token] = groupInstall.copy(context = newContext)
-            saveState()
 
             return MessageBotResponse(
                 success = true,
@@ -285,4 +175,10 @@ class Bot {
             )
         }
     }
+
+    // Dummy methods to satisfy the interface
+    fun validateInstall(secret: String?): Boolean = true
+    fun install(token: String, body: InstallBotBody) {}
+    fun reinstall(token: String, config: List<BotConfigValue>) {}
+    fun uninstall(token: String) {}
 }
