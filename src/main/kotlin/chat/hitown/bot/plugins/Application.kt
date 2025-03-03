@@ -14,6 +14,10 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.plugins.cors.routing.*
+import io.ktor.server.plugins.callloging.*
+import io.ktor.server.plugins.defaultheaders.*
+import ch.qos.logback.classic.Level
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
@@ -21,9 +25,30 @@ fun main() {
 }
 
 fun Application.module() {
-    // Install JSON content negotiation
+    // Install CORS
+    install(CORS) {
+        allowMethod(HttpMethod.Options)
+        allowMethod(HttpMethod.Get)
+        allowMethod(HttpMethod.Post)
+        allowHeader(HttpHeaders.Authorization)
+        allowHeader(HttpHeaders.ContentType)
+        anyHost()
+    }
+
+    // Install default headers
+    install(DefaultHeaders) {
+        header("X-Engine", "Ktor")
+    }
+
+    // Install content negotiation
     install(ContentNegotiation) {
         json()
+    }
+
+    // Install call logging
+    install(CallLogging) {
+        level = Level.INFO
+        filter { call -> call.request.path().startsWith("/") }
     }
 
     routing {
