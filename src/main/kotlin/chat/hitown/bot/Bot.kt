@@ -155,7 +155,7 @@ class Bot {
         println("Config: ${body.config}")
         
         try {
-            val config = body.config ?: emptyList()
+            val config = body.config?.toList() ?: emptyList()
             println("Using config: $config")
             
             groupInstalls[token] = GroupInstall(
@@ -175,14 +175,14 @@ class Bot {
         }
     }
 
-    fun reinstall(token: String, config: List<BotConfigValue>) {
+    fun reinstall(token: String, config: List<BotConfigValue>?) {
         println("=== Reinstalling Bot ===")
         println("Token: $token")
         println("New config: $config")
         
         groupInstalls[token]?.let { install ->
             println("Found existing install for group: ${install.groupName}")
-            groupInstalls[token] = install.copy(config = config)
+            groupInstalls[token] = install.copy(config = config ?: emptyList())
             saveState()
             println("Bot reinstalled successfully")
         } ?: run {
@@ -237,7 +237,7 @@ class Bot {
      */
     suspend fun message(token: String, body: MessageBotBody): MessageBotResponse {
         try {
-            println("=== Message Handler Start ===")
+            println("\n=== Message Handler Start ===")
             println("Token: $token")
             println("Message Body: $body")
             
@@ -287,9 +287,11 @@ class Bot {
             }
             println("Using subreddit: $subreddit")
 
-            println("Fetching Reddit posts...")
+            println("\n=== Fetching Reddit Posts ===")
             val redditContent = fetchRedditPosts(subreddit)
-            println("Reddit content fetched successfully")
+            println("\n=== Reddit Content ===")
+            println(redditContent)
+            println("=== End Reddit Content ===\n")
 
             val response = MessageBotResponse(
                 success = true,
@@ -299,7 +301,7 @@ class Bot {
                     )
                 )
             )
-            println("=== Message Handler End ===")
+            println("=== Message Handler End ===\n")
             return response
         } catch (e: Exception) {
             e.printStackTrace()
@@ -317,19 +319,47 @@ class Bot {
             println("=== Reddit API Request Start ===")
             println("Subreddit: $subreddit")
             
-            val url = "https://www.reddit.com/r/$subreddit/top.json?limit=10&t=week"
+            // Use the public API endpoint with proper User-Agent
+            val url = "https://api.reddit.com/r/$subreddit/top.json?limit=10&t=week"
             println("Request URL: $url")
             
+            // Add delay to respect rate limits
+            delay(1000)
+            
             val response = client.get(url) {
-                header("User-Agent", "HiTownBot/1.0 (by /u/hitownbot)")
+                // Updated User-Agent format to match Reddit's requirements
+                header("User-Agent", "HiTownBot/1.0 (by /u/hitownbot; +https://github.com/hitownbot)")
                 header("Accept", "application/json")
                 header("Accept-Language", "en-US,en;q=0.9")
-                header("Connection", "keep-alive")
-                header("Cache-Control", "no-cache")
             }
 
             println("Response Status: ${response.status.value}")
             println("Response Headers: ${response.headers}")
+
+            if (response.status.value == 403) {
+                println("Reddit API 403 Error - Possible causes: Invalid User-Agent, rate limiting, or private subreddit")
+                // Try alternative URL format
+                val altUrl = "https://old.reddit.com/r/$subreddit/top.json?limit=10&t=week"
+                println("Trying alternative URL: $altUrl")
+                
+                delay(1000) // Add delay before second request
+                
+                val altResponse = client.get(altUrl) {
+                    header("User-Agent", "HiTownBot/1.0 (by /u/hitownbot; +https://github.com/hitownbot)")
+                    header("Accept", "application/json")
+                    header("Accept-Language", "en-US,en;q=0.9")
+                }
+
+                if (altResponse.status.value == 403) {
+                    return "Error: Unable to access r/$subreddit. The subreddit might be private or the request was blocked. Please try a different subreddit."
+                }
+
+                if (altResponse.status.value !in 200..299) {
+                    return "Error: Reddit API returned status ${altResponse.status.value}. Please try again later."
+                }
+
+                return processRedditResponse(altResponse.bodyAsText(), subreddit)
+            }
 
             if (response.status.value !in 200..299) {
                 println("Reddit API Error: ${response.status.value}")
@@ -339,57 +369,106 @@ class Bot {
                 return "Error: Reddit API returned status ${response.status.value}. Please try again later."
             }
 
-            val responseText = response.bodyAsText()
+            return processRedditResponse(response.bodyAsText(), subreddit)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            println("Error in fetchRedditPosts: ${e.message}")
+            println("Stack trace: ${e.stackTraceToString()}")
+            return "Error fetching posts from Reddit: ${e.message}. Please try again later."
+        }
+    }
+
+    private fun processRedditResponse(responseText: String, subreddit: String): String {
+        try {
+            println("Processing Reddit response...")
             println("Response Body Length: ${responseText.length}")
             
             val jsonResponse = Json.parseToJsonElement(responseText)
+            println("JSON Response Type: ${jsonResponse::class.simpleName}")
+            
             val data = jsonResponse.jsonObject["data"]?.jsonObject
-            val posts = data?.get("children")?.jsonArray
-
+            if (data == null) {
+                println("Data object is null in response")
+                return "Error: Invalid response format from Reddit API"
+            }
+            
+            val posts = data.get("children")?.jsonArray
             if (posts == null || posts.isEmpty()) {
-                println("No posts found in subreddit")
-                return "No posts found in r/$subreddit"
+                println("No posts found in response")
+                return "No posts found in the subreddit"
             }
 
             println("Found ${posts.size} posts")
             val formattedPosts = posts.mapNotNull { post ->
                 try {
                     val postData = post.jsonObject["data"]?.jsonObject
-                    val title = postData?.get("title")?.jsonPrimitive?.content
-                    val url = postData?.get("permalink")?.jsonPrimitive?.content
-                    val score = postData?.get("score")?.jsonPrimitive?.int
-                    val numComments = postData?.get("num_comments")?.jsonPrimitive?.int
-                    val author = postData?.get("author")?.jsonPrimitive?.content
-                    val created = postData?.get("created_utc")?.jsonPrimitive?.long
+                    if (postData == null) {
+                        println("Post data is null")
+                        return@mapNotNull null
+                    }
 
-                    if (title != null && url != null && score != null) {
-                        val timeAgo = if (created != null) {
-                            val now = System.currentTimeMillis() / 1000
-                            val diff = now - created
-                            when {
-                                diff < 60 -> "just now"
-                                diff < 3600 -> "${diff / 60}m ago"
-                                diff < 86400 -> "${diff / 3600}h ago"
-                                else -> "${diff / 86400}d ago"
-                            }
-                        } else ""
-                        
-                        "• $title\n  ↑ $score points | 💬 $numComments comments | 👤 $author | ⏰ $timeAgo\n  https://reddit.com$url"
-                    } else null
+                    // Log all available fields for debugging
+                    println("\nPost Data Fields:")
+                    postData.keys.forEach { key ->
+                        val value = postData[key]?.jsonPrimitive?.content
+                        println("$key: $value")
+                    }
+
+                    val title = postData.get("title")?.jsonPrimitive?.content
+                    val url = postData.get("permalink")?.jsonPrimitive?.content
+                    val score = postData.get("score")?.jsonPrimitive?.content?.toIntOrNull()
+                    val numComments = postData.get("num_comments")?.jsonPrimitive?.content?.toIntOrNull()
+                    val author = postData.get("author")?.jsonPrimitive?.content
+                    val created = postData.get("created_utc")?.jsonPrimitive?.content?.toDoubleOrNull()?.toLong()
+                    val selftext = postData.get("selftext")?.jsonPrimitive?.content
+                    val isSelf = postData.get("is_self")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+
+                    if (title == null || url == null || score == null) {
+                        println("Missing required fields: title=${title != null}, url=${url != null}, score=${score != null}")
+                        return@mapNotNull null
+                    }
+
+                    val timeAgo = if (created != null) {
+                        val now = System.currentTimeMillis() / 1000
+                        val diff = now - created
+                        when {
+                            diff < 60 -> "just now"
+                            diff < 3600 -> "${diff / 60}m ago"
+                            diff < 86400 -> "${diff / 3600}h ago"
+                            else -> "${diff / 86400}d ago"
+                        }
+                    } else "unknown time"
+
+                    // Format the post with more details
+                    val formattedPost = buildString {
+                        append("• $title\n")
+                        append("  ↑ $score points | 💬 ${numComments ?: 0} comments | 👤 ${author ?: "deleted"} | ⏰ $timeAgo\n")
+                        if (isSelf && !selftext.isNullOrBlank()) {
+                            append("  📝 ${selftext.take(200)}${if (selftext.length > 200) "..." else ""}\n")
+                        }
+                        append("  🔗 https://reddit.com$url")
+                    }
+                    
+                    println("Successfully formatted post: $title")
+                    formattedPost
                 } catch (e: Exception) {
                     println("Error parsing post: ${e.message}")
+                    e.printStackTrace()
                     null
                 }
-            }.joinToString("\n\n")
+            }
 
-            val result = "Top 10 posts this week from r/$subreddit:\n\n$formattedPosts"
-            println("=== Reddit API Request End ===")
-            return result
+            if (formattedPosts.isEmpty()) {
+                println("No posts were successfully formatted")
+                return "Error: Unable to format any posts. The subreddit might be private or restricted."
+            }
+
+            println("Successfully formatted ${formattedPosts.size} posts")
+            return "Top 10 posts this week from r/$subreddit:\n\n${formattedPosts.joinToString("\n\n")}"
         } catch (e: Exception) {
+            println("Error processing response: ${e.message}")
             e.printStackTrace()
-            println("Error in fetchRedditPosts: ${e.message}")
-            println("Stack trace: ${e.stackTraceToString()}")
-            return "Error fetching posts from Reddit: ${e.message}. Please try again later."
+            return "Error processing Reddit response: ${e.message}"
         }
     }
 }
