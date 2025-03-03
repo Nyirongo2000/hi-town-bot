@@ -27,7 +27,7 @@ data class GroupInstall(
     val groupId: String,
     val groupName: String,
     val webhook: String,
-    val config: List<BotConfigValue>,
+    val config: List<BotConfigValue> = emptyList(),
     val isPaused: Boolean = false
 )
 
@@ -44,6 +44,7 @@ class Bot {
                 isLenient = true
                 ignoreUnknownKeys = true
                 coerceInputValues = true
+                encodeDefaults = true
             })
         }
         install(Logging) {
@@ -65,26 +66,43 @@ class Bot {
     private val saveFile = File("./bot_state.json")
 
     init {
+        println("=== Bot Initialization ===")
         loadState()
+        println("Current group installs: ${groupInstalls.size}")
+        groupInstalls.forEach { (token, install) ->
+            println("Group: ${install.groupName} (${install.groupId})")
+            println("  Token: $token")
+            println("  Webhook: ${install.webhook}")
+            println("  Config: ${install.config}")
+            println("  Paused: ${install.isPaused}")
+        }
     }
 
     private fun loadState() {
         try {
+            println("Loading state from file: ${saveFile.absolutePath}")
             if (saveFile.exists()) {
                 val state = Json.decodeFromString<Map<String, GroupInstall>>(saveFile.readText())
                 groupInstalls.clear()
                 groupInstalls.putAll(state)
+                println("Loaded ${groupInstalls.size} group installs")
+            } else {
+                println("No state file found, starting fresh")
             }
         } catch (e: Exception) {
             println("Error loading state: ${e.message}")
+            e.printStackTrace()
         }
     }
 
     private fun saveState() {
         try {
+            println("Saving state to file: ${saveFile.absolutePath}")
             saveFile.writeText(Json.encodeToString(groupInstalls))
+            println("Saved ${groupInstalls.size} group installs")
         } catch (e: Exception) {
             println("Error saving state: ${e.message}")
+            e.printStackTrace()
         }
     }
 
@@ -121,7 +139,9 @@ class Bot {
     )
 
     fun validateInstall(secret: String?): Boolean {
-        println("Validating install secret: $secret")
+        println("=== Validating Install Secret ===")
+        println("Received secret: $secret")
+        println("Expected secret: $INSTALL_SECRET")
         // For testing, accept any secret
         return true
     }
@@ -135,14 +155,19 @@ class Bot {
         println("Config: ${body.config}")
         
         try {
+            val config = body.config ?: emptyList()
+            println("Using config: $config")
+            
             groupInstalls[token] = GroupInstall(
                 groupId = body.groupId,
                 groupName = body.groupName,
                 webhook = body.webhook,
-                config = body.config ?: emptyList()
+                config = config,
+                isPaused = false
             )
             saveState()
-            println("Bot installed successfully")
+            println("Bot installed successfully in group: ${body.groupName}")
+            println("Current group installs: ${groupInstalls.size}")
         } catch (e: Exception) {
             println("Error installing bot: ${e.message}")
             e.printStackTrace()
@@ -151,28 +176,59 @@ class Bot {
     }
 
     fun reinstall(token: String, config: List<BotConfigValue>) {
+        println("=== Reinstalling Bot ===")
+        println("Token: $token")
+        println("New config: $config")
+        
         groupInstalls[token]?.let { install ->
+            println("Found existing install for group: ${install.groupName}")
             groupInstalls[token] = install.copy(config = config)
             saveState()
+            println("Bot reinstalled successfully")
+        } ?: run {
+            println("No existing install found for token: $token")
         }
     }
 
     fun uninstall(token: String) {
-        groupInstalls.remove(token)
-        saveState()
+        println("=== Uninstalling Bot ===")
+        println("Token: $token")
+        
+        groupInstalls[token]?.let { install ->
+            println("Found install for group: ${install.groupName}")
+            groupInstalls.remove(token)
+            saveState()
+            println("Bot uninstalled successfully")
+        } ?: run {
+            println("No install found for token: $token")
+        }
     }
 
     fun pause(token: String) {
+        println("=== Pausing Bot ===")
+        println("Token: $token")
+        
         groupInstalls[token]?.let { install ->
+            println("Found install for group: ${install.groupName}")
             groupInstalls[token] = install.copy(isPaused = true)
             saveState()
+            println("Bot paused successfully")
+        } ?: run {
+            println("No install found for token: $token")
         }
     }
 
     fun resume(token: String) {
+        println("=== Resuming Bot ===")
+        println("Token: $token")
+        
         groupInstalls[token]?.let { install ->
+            println("Found install for group: ${install.groupName}")
             groupInstalls[token] = install.copy(isPaused = false)
             saveState()
+            println("Bot resumed successfully")
+        } ?: run {
+            println("No install found for token: $token")
         }
     }
 
