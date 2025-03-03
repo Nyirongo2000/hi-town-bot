@@ -320,7 +320,7 @@ class Bot {
             println("Subreddit: $subreddit")
             
             // Use the public API endpoint with proper User-Agent
-            val url = "https://api.reddit.com/r/$subreddit/top.json?limit=10&t=week"
+            val url = "https://www.reddit.com/r/$subreddit/top.json?limit=10&t=week"
             println("Request URL: $url")
             
             // Add delay to respect rate limits
@@ -328,16 +328,17 @@ class Bot {
             
             val response = client.get(url) {
                 // Updated User-Agent format to match Reddit's requirements
-                header("User-Agent", "HiTownBot/1.0 (by /u/hitownbot; +https://github.com/hitownbot)")
+                header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
                 header("Accept", "application/json")
                 header("Accept-Language", "en-US,en;q=0.9")
+                header("Connection", "keep-alive")
             }
 
             println("Response Status: ${response.status.value}")
             println("Response Headers: ${response.headers}")
 
             if (response.status.value == 403) {
-                println("Reddit API 403 Error - Possible causes: Invalid User-Agent, rate limiting, or private subreddit")
+                println("Reddit API 403 Error - Trying alternative URL")
                 // Try alternative URL format
                 val altUrl = "https://old.reddit.com/r/$subreddit/top.json?limit=10&t=week"
                 println("Trying alternative URL: $altUrl")
@@ -345,9 +346,10 @@ class Bot {
                 delay(1000) // Add delay before second request
                 
                 val altResponse = client.get(altUrl) {
-                    header("User-Agent", "HiTownBot/1.0 (by /u/hitownbot; +https://github.com/hitownbot)")
+                    header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
                     header("Accept", "application/json")
                     header("Accept-Language", "en-US,en;q=0.9")
+                    header("Connection", "keep-alive")
                 }
 
                 if (altResponse.status.value == 403) {
@@ -410,10 +412,11 @@ class Bot {
                     // Log all available fields for debugging
                     println("\nPost Data Fields:")
                     postData.keys.forEach { key ->
-                        val value = postData[key]?.jsonPrimitive?.content
+                        val value = postData[key]
                         println("$key: $value")
                     }
 
+                    // Safely extract values with null checks
                     val title = postData.get("title")?.jsonPrimitive?.content
                     val url = postData.get("permalink")?.jsonPrimitive?.content
                     val score = postData.get("score")?.jsonPrimitive?.content?.toIntOrNull()
@@ -422,6 +425,8 @@ class Bot {
                     val created = postData.get("created_utc")?.jsonPrimitive?.content?.toDoubleOrNull()?.toLong()
                     val selftext = postData.get("selftext")?.jsonPrimitive?.content
                     val isSelf = postData.get("is_self")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+                    val url_overridden_by_dest = postData.get("url_overridden_by_dest")?.jsonPrimitive?.content
+                    val subreddit_name_prefixed = postData.get("subreddit_name_prefixed")?.jsonPrimitive?.content
 
                     if (title == null || url == null || score == null) {
                         println("Missing required fields: title=${title != null}, url=${url != null}, score=${score != null}")
@@ -439,36 +444,73 @@ class Bot {
                         }
                     } else "unknown time"
 
-                    // Format the post with more details
+                    // Format the post with more details and better visibility
                     val formattedPost = buildString {
-                        append("• $title\n")
-                        append("  ↑ $score points | 💬 ${numComments ?: 0} comments | 👤 ${author ?: "deleted"} | ⏰ $timeAgo\n")
+                        // Title with emoji
+                        append("📌 $title\n")
+                        
+                        // Stats line with emojis
+                        append("📊 Stats: ")
+                        append("↑ $score points | ")
+                        append("💬 ${numComments ?: 0} comments | ")
+                        append("👤 ${author ?: "deleted"} | ")
+                        append("⏰ $timeAgo\n")
+                        
+                        // Content preview for self posts
                         if (isSelf && !selftext.isNullOrBlank()) {
-                            append("  📝 ${selftext.take(200)}${if (selftext.length > 200) "..." else ""}\n")
+                            append("📝 Content:\n")
+                            append("${selftext.take(200)}${if (selftext.length > 200) "..." else ""}\n")
                         }
-                        append("  🔗 https://reddit.com$url")
+                        
+                        // Image preview for link posts
+                        if (!isSelf && url_overridden_by_dest != null) {
+                            append("🖼️ Image: $url_overridden_by_dest\n")
+                        }
+                        
+                        // Link to post
+                        append("🔗 https://reddit.com$url")
                     }
                     
                     println("Successfully formatted post: $title")
                     formattedPost
                 } catch (e: Exception) {
                     println("Error parsing post: ${e.message}")
-                    e.printStackTrace()
+                    // Try to get at least the title and link
+                    try {
+                        val postData = post.jsonObject["data"]?.jsonObject
+                        val title = postData?.get("title")?.jsonPrimitive?.content
+                        val url = postData?.get("permalink")?.jsonPrimitive?.content
+                        if (title != null && url != null) {
+                            return@mapNotNull "📌 $title\n🔗 https://reddit.com$url"
+                        }
+                    } catch (e2: Exception) {
+                        println("Failed to get basic post info: ${e2.message}")
+                    }
                     null
                 }
             }
 
             if (formattedPosts.isEmpty()) {
                 println("No posts were successfully formatted")
-                return "Error: Unable to format any posts. The subreddit might be private or restricted."
+                // Return raw JSON for debugging
+                return "Error: Unable to format posts. Raw response:\n${responseText.take(1000)}..."
             }
 
             println("Successfully formatted ${formattedPosts.size} posts")
-            return "Top 10 posts this week from r/$subreddit:\n\n${formattedPosts.joinToString("\n\n")}"
+            
+            // Create a more visible header
+            val header = buildString {
+                append("🔥 TOP POSTS FROM r/$subreddit 🔥\n")
+                append("📅 This Week's Best\n")
+                append("=".repeat(30) + "\n\n")
+            }
+            
+            return header + formattedPosts.joinToString("\n\n" + "=".repeat(30) + "\n\n")
         } catch (e: Exception) {
             println("Error processing response: ${e.message}")
             e.printStackTrace()
-            return "Error processing Reddit response: ${e.message}"
+            // Return raw JSON for debugging
+            return "Error processing Reddit response. Raw data:\n${responseText.take(1000)}..."
         }
     }
 }
