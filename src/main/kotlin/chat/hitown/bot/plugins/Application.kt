@@ -82,15 +82,26 @@ fun Application.configureRouting() {
 
         post("/install") {
             try {
+                println("=== Install Request Received ===")
                 val body = call.receive<InstallBotBody>()
+                println("Install request body: $body")
+                
                 if (!bot.validateInstall(body.secret)) {
+                    println("Invalid install secret")
                     call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid install secret"))
                     return@post
                 }
+                
                 val token = UUID.randomUUID().toString()
+                println("Generated token: $token")
+                
                 bot.install(token, body)
+                println("Bot installed successfully")
+                
                 call.respond(InstallBotResponse(token = token))
             } catch (e: Exception) {
+                println("Install error: ${e.message}")
+                e.printStackTrace()
                 call.application.log.error("Install error", e)
                 call.respond(HttpStatusCode.BadRequest, mapOf(
                     "error" to e.message,
