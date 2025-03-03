@@ -19,6 +19,7 @@ import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.defaultheaders.*
 import org.slf4j.event.Level
 import kotlinx.serialization.json.Json
+import java.util.*
 
 fun main() {
     embeddedServer(
@@ -75,97 +76,108 @@ fun Application.configureRouting() {
     }
 
     routing {
-        route("/") {
-            get {
-                call.respond(bot.details)
-            }
+        get("/") {
+            call.respond(bot.details)
         }
 
-        route("/health") {
-            get {
-                call.respond(HttpStatusCode.OK, mapOf(
-                    "status" to "healthy",
-                    "timestamp" to System.currentTimeMillis()
+        post("/install") {
+            try {
+                val body = call.receive<InstallBotBody>()
+                if (!bot.validateInstall(body.secret)) {
+                    call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid install secret"))
+                    return@post
+                }
+                val token = UUID.randomUUID().toString()
+                bot.install(token, body)
+                call.respond(InstallBotResponse(token = token))
+            } catch (e: Exception) {
+                call.application.log.error("Install error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf(
+                    "error" to e.message,
+                    "type" to e.javaClass.simpleName
                 ))
             }
         }
 
-        route("/install") {
-            post {
-                try {
-                    val body = call.receive<InstallBotBody>()
-                    if (!bot.validateInstall(body.secret)) {
-                        call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid install secret"))
-                        return@post
-                    }
-                    val token = java.util.UUID.randomUUID().toString()
-                    bot.install(token, body)
-                    call.respond(InstallBotResponse(token = token))
-                } catch (e: Exception) {
-                    call.application.log.error("Install error", e)
-                    call.respond(HttpStatusCode.BadRequest, mapOf(
-                        "error" to e.message,
-                        "type" to e.javaClass.simpleName
-                    ))
-                }
+        post("/reinstall") {
+            try {
+                val token = call.request.header("Authorization")?.removePrefix("Bearer ")
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Missing authorization token"))
+
+                val body = call.receive<ReinstallBotBody>()
+                bot.reinstall(token, body.config ?: emptyList())
+                call.respond(HttpStatusCode.OK)
+            } catch (e: Exception) {
+                call.application.log.error("Reinstall error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf(
+                    "error" to e.message,
+                    "type" to e.javaClass.simpleName
+                ))
             }
         }
 
-        route("/reinstall") {
-            post {
-                try {
-                    val token = call.request.header("Authorization")?.removePrefix("Bearer ")
-                        ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Missing authorization token"))
+        post("/uninstall") {
+            try {
+                val token = call.request.header("Authorization")?.removePrefix("Bearer ")
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Missing authorization token"))
 
-                    val body = call.receive<ReinstallBotBody>()
-                    body.config?.let { config ->
-                        bot.reinstall(token, config)
-                    }
-                    call.respond(HttpStatusCode.OK)
-                } catch (e: Exception) {
-                    call.application.log.error("Reinstall error", e)
-                    call.respond(HttpStatusCode.BadRequest, mapOf(
-                        "error" to e.message,
-                        "type" to e.javaClass.simpleName
-                    ))
-                }
+                bot.uninstall(token)
+                call.respond(HttpStatusCode.OK)
+            } catch (e: Exception) {
+                call.application.log.error("Uninstall error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf(
+                    "error" to e.message,
+                    "type" to e.javaClass.simpleName
+                ))
             }
         }
 
-        route("/uninstall") {
-            post {
-                try {
-                    val token = call.request.header("Authorization")?.removePrefix("Bearer ")
-                        ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Missing authorization token"))
+        post("/message") {
+            try {
+                val token = call.request.header("Authorization")?.removePrefix("Bearer ")
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Missing authorization token"))
 
-                    bot.uninstall(token)
-                    call.respond(HttpStatusCode.OK)
-                } catch (e: Exception) {
-                    call.application.log.error("Uninstall error", e)
-                    call.respond(HttpStatusCode.BadRequest, mapOf(
-                        "error" to e.message,
-                        "type" to e.javaClass.simpleName
-                    ))
-                }
+                val body = call.receive<MessageBotBody>()
+                val response = bot.message(token, body)
+                call.respond(response)
+            } catch (e: Exception) {
+                call.application.log.error("Message error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf(
+                    "error" to e.message,
+                    "type" to e.javaClass.simpleName
+                ))
             }
         }
 
-        route("/message") {
-            post {
-                try {
-                    val token = call.request.header("Authorization")?.removePrefix("Bearer ")
-                        ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Missing authorization token"))
+        post("/pause") {
+            try {
+                val token = call.request.header("Authorization")?.removePrefix("Bearer ")
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Missing authorization token"))
 
-                    val body = call.receive<MessageBotBody>()
-                    val response = bot.message(token, body)
-                    call.respond(response)
-                } catch (e: Exception) {
-                    call.application.log.error("Message error", e)
-                    call.respond(HttpStatusCode.BadRequest, mapOf(
-                        "error" to e.message,
-                        "type" to e.javaClass.simpleName
-                    ))
-                }
+                bot.pause(token)
+                call.respond(HttpStatusCode.OK)
+            } catch (e: Exception) {
+                call.application.log.error("Pause error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf(
+                    "error" to e.message,
+                    "type" to e.javaClass.simpleName
+                ))
+            }
+        }
+
+        post("/resume") {
+            try {
+                val token = call.request.header("Authorization")?.removePrefix("Bearer ")
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Missing authorization token"))
+
+                bot.resume(token)
+                call.respond(HttpStatusCode.OK)
+            } catch (e: Exception) {
+                call.application.log.error("Resume error", e)
+                call.respond(HttpStatusCode.BadRequest, mapOf(
+                    "error" to e.message,
+                    "type" to e.javaClass.simpleName
+                ))
             }
         }
     }

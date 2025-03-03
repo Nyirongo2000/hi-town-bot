@@ -6,14 +6,7 @@
 
 package chat.hitown.bot
 
-import chat.hitown.bot.plugins.BotConfigValue
-import chat.hitown.bot.plugins.BotDetails
-import chat.hitown.bot.plugins.InstallBotBody
-import chat.hitown.bot.plugins.MessageBotBody
-import chat.hitown.bot.plugins.MessageBotResponse
-import chat.hitown.bot.plugins.BotConfigField
-import chat.hitown.bot.plugins.BotAction
-import chat.hitown.bot.plugins.json
+import chat.hitown.bot.plugins.*
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.contentnegotiation.*
@@ -24,6 +17,19 @@ import io.ktor.client.statement.*
 import kotlinx.serialization.json.*
 import kotlinx.serialization.Serializable
 import kotlinx.coroutines.*
+import java.io.File
+import java.util.*
+
+private const val INSTALL_SECRET = "hitownbot"
+
+@Serializable
+data class GroupInstall(
+    val groupId: String,
+    val groupName: String,
+    val webhook: String,
+    val config: List<BotConfigValue>,
+    val isPaused: Boolean = false
+)
 
 /**
  * Bot instance.
@@ -52,6 +58,33 @@ class Bot {
                 connectTimeout = 5000
                 connectAttempts = 5
             }
+        }
+    }
+
+    private val groupInstalls = mutableMapOf<String, GroupInstall>()
+    private val saveFile = File("./bot_state.json")
+
+    init {
+        loadState()
+    }
+
+    private fun loadState() {
+        try {
+            if (saveFile.exists()) {
+                val state = Json.decodeFromString<Map<String, GroupInstall>>(saveFile.readText())
+                groupInstalls.clear()
+                groupInstalls.putAll(state)
+            }
+        } catch (e: Exception) {
+            println("Error loading state: ${e.message}")
+        }
+    }
+
+    private fun saveState() {
+        try {
+            saveFile.writeText(Json.encodeToString(groupInstalls))
+        } catch (e: Exception) {
+            println("Error saving state: ${e.message}")
         }
     }
 
@@ -87,15 +120,144 @@ class Bot {
         )
     )
 
+    fun validateInstall(secret: String?): Boolean {
+        return secret == INSTALL_SECRET
+    }
+
+    fun install(token: String, body: InstallBotBody) {
+        groupInstalls[token] = GroupInstall(
+            groupId = body.groupId,
+            groupName = body.groupName,
+            webhook = body.webhook,
+            config = body.config ?: emptyList()
+        )
+        saveState()
+    }
+
+    fun reinstall(token: String, config: List<BotConfigValue>) {
+        groupInstalls[token]?.let { install ->
+            groupInstalls[token] = install.copy(config = config)
+            saveState()
+        }
+    }
+
+    fun uninstall(token: String) {
+        groupInstalls.remove(token)
+        saveState()
+    }
+
+    fun pause(token: String) {
+        groupInstalls[token]?.let { install ->
+            groupInstalls[token] = install.copy(isPaused = true)
+            saveState()
+        }
+    }
+
+    fun resume(token: String) {
+        groupInstalls[token]?.let { install ->
+            groupInstalls[token] = install.copy(isPaused = false)
+            saveState()
+        }
+    }
+
+    /**
+     * Handle messages sent to the Hi Town group.
+     */
+    suspend fun message(token: String, body: MessageBotBody): MessageBotResponse {
+        try {
+            println("=== Message Handler Start ===")
+            println("Token: $token")
+            println("Message Body: $body")
+            
+            val groupInstall = groupInstalls[token]
+            println("Group Install: $groupInstall")
+            
+            if (groupInstall == null) {
+                println("Bot not installed in this group")
+                return MessageBotResponse(
+                    success = false,
+                    note = "The bot is not installed in this group."
+                )
+            }
+
+            if (groupInstall.isPaused) {
+                println("Bot is paused in this group")
+                return MessageBotResponse(
+                    success = false,
+                    note = "The bot is paused in this group."
+                )
+            }
+
+            val message = body.message
+            println("Received message: $message")
+            
+            if (message == null) {
+                println("No message provided")
+                return MessageBotResponse(
+                    success = false,
+                    note = "No message provided"
+                )
+            }
+
+            if (!message.startsWith("!reddit")) {
+                println("Not a Reddit command: $message")
+                return MessageBotResponse(
+                    success = false,
+                    note = "Not a Reddit command"
+                )
+            }
+
+            val parts = message.split(" ")
+            val subreddit = if (parts.size > 1) {
+                parts[1].trim()
+            } else {
+                groupInstall.config.find { it.key == "subreddit" }?.value ?: "programming"
+            }
+            println("Using subreddit: $subreddit")
+
+            println("Fetching Reddit posts...")
+            val redditContent = fetchRedditPosts(subreddit)
+            println("Reddit content fetched successfully")
+
+            val response = MessageBotResponse(
+                success = true,
+                actions = listOf(
+                    BotAction(
+                        message = redditContent
+                    )
+                )
+            )
+            println("=== Message Handler End ===")
+            return response
+        } catch (e: Exception) {
+            e.printStackTrace()
+            println("Error in message handler: ${e.message}")
+            println("Stack trace: ${e.stackTraceToString()}")
+            return MessageBotResponse(
+                success = false,
+                note = "Error processing message: ${e.message}"
+            )
+        }
+    }
+
     private suspend fun fetchRedditPosts(subreddit: String): String {
         try {
-            val response = client.get("https://www.reddit.com/r/$subreddit/top.json?limit=10&t=week") {
+            println("=== Reddit API Request Start ===")
+            println("Subreddit: $subreddit")
+            
+            val url = "https://www.reddit.com/r/$subreddit/top.json?limit=10&t=week"
+            println("Request URL: $url")
+            
+            val response = client.get(url) {
                 header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
                 header("Accept", "application/json")
                 header("Accept-Language", "en-US,en;q=0.9")
                 header("Connection", "keep-alive")
                 header("Cache-Control", "no-cache")
             }
+
+            println("Response Status: ${response.status.value}")
+            println("Response Headers: ${response.headers}")
 
             if (response.status.value !in 200..299) {
                 println("Reddit API Error: ${response.status.value}")
@@ -104,16 +266,18 @@ class Bot {
             }
 
             val responseText = response.bodyAsText()
-            println("Reddit API Response: $responseText")
+            println("Response Body Length: ${responseText.length}")
             
             val jsonResponse = Json.parseToJsonElement(responseText)
             val data = jsonResponse.jsonObject["data"]?.jsonObject
             val posts = data?.get("children")?.jsonArray
 
             if (posts == null || posts.isEmpty()) {
+                println("No posts found in subreddit")
                 return "No posts found in r/$subreddit"
             }
 
+            println("Found ${posts.size} posts")
             val formattedPosts = posts.mapNotNull { post ->
                 try {
                     val postData = post.jsonObject["data"]?.jsonObject
@@ -144,59 +308,14 @@ class Bot {
                 }
             }.joinToString("\n\n")
 
-            return "Top 10 posts this week from r/$subreddit:\n\n$formattedPosts"
+            val result = "Top 10 posts this week from r/$subreddit:\n\n$formattedPosts"
+            println("=== Reddit API Request End ===")
+            return result
         } catch (e: Exception) {
             e.printStackTrace()
+            println("Error in fetchRedditPosts: ${e.message}")
+            println("Stack trace: ${e.stackTraceToString()}")
             return "Error fetching posts from Reddit: ${e.message}. Please try again later."
         }
     }
-
-    /**
-     * Handle messages sent to the Hi Town group.
-     */
-    suspend fun message(token: String, body: MessageBotBody): MessageBotResponse {
-        try {
-            val message = body.message ?: return MessageBotResponse(
-                success = false,
-                note = "No message provided"
-            )
-
-            if (!message.startsWith("!reddit")) {
-                return MessageBotResponse(
-                    success = false,
-                    note = "Not a Reddit command"
-                )
-            }
-
-            val parts = message.split(" ")
-            val subreddit = if (parts.size > 1) {
-                parts[1].trim()
-            } else {
-                "programming" // Default subreddit
-            }
-
-            val redditContent = fetchRedditPosts(subreddit)
-
-            return MessageBotResponse(
-                success = true,
-                actions = listOf(
-                    BotAction(
-                        message = redditContent
-                    )
-                )
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return MessageBotResponse(
-                success = false,
-                note = "Error processing message: ${e.message}"
-            )
-        }
-    }
-
-    // Dummy methods to satisfy the interface
-    fun validateInstall(secret: String?): Boolean = true
-    fun install(token: String, body: InstallBotBody) {}
-    fun reinstall(token: String, config: List<BotConfigValue>) {}
-    fun uninstall(token: String) {}
 }
