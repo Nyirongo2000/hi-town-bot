@@ -13,6 +13,7 @@ import chat.hitown.bot.plugins.MessageBotBody
 import chat.hitown.bot.plugins.MessageBotResponse
 import chat.hitown.bot.plugins.BotConfigField
 import chat.hitown.bot.plugins.BotAction
+import chat.hitown.bot.plugins.json
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.contentnegotiation.*
@@ -21,12 +22,35 @@ import io.ktor.serialization.kotlinx.json.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import kotlinx.serialization.json.*
+import kotlinx.serialization.Serializable
 import kotlinx.coroutines.*
+import java.io.File
+
+private const val INSTALL_SECRET = "hitownbot"
+private const val CONTEXT_SIZE = 7
 
 /**
  * Bot instance.
  */
 val bot = Bot()
+
+@Serializable
+enum class MessageContextRole(val value: String) {
+    User("user"),
+    Assistant("assistant"),
+}
+
+@Serializable
+data class MessageContext(
+    val role: MessageContextRole,
+    val body: MessageBotBody,
+)
+
+@Serializable
+data class GroupInstall(
+    val body: InstallBotBody,
+    val context: List<MessageContext>,
+)
 
 class Bot {
     private val client = HttpClient(CIO) {
@@ -50,6 +74,33 @@ class Bot {
                 connectTimeout = 5000
                 connectAttempts = 5
             }
+        }
+    }
+
+    val groupInstalls = mutableMapOf<String, GroupInstall>()
+    private val saveFile = File("./bot_state.json")
+
+    init {
+        loadState()
+    }
+
+    private fun loadState() {
+        try {
+            if (saveFile.exists()) {
+                val state = Json.decodeFromString<Map<String, GroupInstall>>(saveFile.readText())
+                groupInstalls.clear()
+                groupInstalls.putAll(state)
+            }
+        } catch (e: Exception) {
+            println("Error loading state: ${e.message}")
+        }
+    }
+
+    private fun saveState() {
+        try {
+            saveFile.writeText(Json.encodeToString(groupInstalls))
+        } catch (e: Exception) {
+            println("Error saving state: ${e.message}")
         }
     }
 
@@ -85,98 +136,39 @@ class Bot {
         )
     )
 
-    private val groupConfigs = mutableMapOf<String, List<BotConfigValue>>()
-    private val pausedGroups = mutableSetOf<String>()  // Track paused groups
+    fun validateInstall(secret: String?): Boolean {
+        return secret == INSTALL_SECRET
+    }
 
-    /**
-     * Validate the bot secret (optional).
-     *
-     * Returning false will not allow the bot to be installed.
-     */
-    suspend fun validateInstall(
-        /**
-         * The secret as configured by the bot owner when creating the bot in Hi Town.
-         */
-        secret: String?,
-    ): Boolean = true
+    fun install(token: String, body: InstallBotBody) {
+        groupInstalls[token] = GroupInstall(
+            body = body,
+            context = emptyList()
+        )
+        saveState()
+    }
 
-    /**
-     * Handle the bot being installed in a Hi Town group.
-     */
-    suspend fun install(
-        /**
-         * The unique token associated with the Hi Town group.
-         */
-        token: String,
-        /**
-         * Install information and configuration.
-         *
-         * See `Models.kt` for details.
-         */
-        body: InstallBotBody,
-    ) {
-        body.config?.let { config ->
-            groupConfigs[token] = config
+    fun reinstall(token: String, config: List<BotConfigValue>) {
+        if (token in groupInstalls) {
+            groupInstalls[token] = groupInstalls[token]!!.copy(
+                body = groupInstalls[token]!!.body.copy(
+                    config = config
+                )
+            )
+            saveState()
         }
     }
 
-    /**
-     * Handle the bot being reinstalled in a Hi Town group due to config changes made by the group host.
-     */
-    suspend fun reinstall(
-        /**
-         * The unique token associated with the Hi Town group.
-         */
-        token: String,
-        /**
-         * The updated bot config.
-         */
-        config: List<BotConfigValue>,
-    ) {
-        groupConfigs[token] = config
-    }
-
-    /**
-     * Handle the bot being uninstalled from a Hi Town group.
-     */
-    suspend fun uninstall(
-        /**
-         * The unique token associated with the Hi Town group.
-         */
-        token: String,
-    ) {
-        groupConfigs.remove(token)
-    }
-
-    /**
-     * Handle the bot being paused in a Hi Town group.
-     */
-    suspend fun pause(
-        /**
-         * The unique token associated with the Hi Town group.
-         */
-        token: String,
-    ) {
-        pausedGroups.add(token)
-    }
-
-    /**
-     * Handle the bot being resumed in a Hi Town group.
-     */
-    suspend fun resume(
-        /**
-         * The unique token associated with the Hi Town group.
-         */
-        token: String,
-    ) {
-        pausedGroups.remove(token)
+    fun uninstall(token: String) {
+        groupInstalls.remove(token)
+        saveState()
     }
 
     private suspend fun fetchRedditPosts(subreddit: String): String {
         try {
-            // Using 'top' instead of 'hot' and specifying 't=week' for weekly top posts
             val response = client.get("https://www.reddit.com/r/$subreddit/top.json?limit=10&t=week") {
-                header("User-Agent", "HiTownBot/1.0")
+                header("User-Agent", "HiTownBot/1.0 (by /u/hitown)")
+                header("Accept", "application/json")
             }
 
             if (response.status.value !in 200..299) {
@@ -184,7 +176,7 @@ class Bot {
             }
 
             val responseText = response.bodyAsText()
-            println("Reddit API Response: $responseText") // Debug log
+            println("Reddit API Response: $responseText")
             
             val jsonResponse = Json.parseToJsonElement(responseText)
             val data = jsonResponse.jsonObject["data"]?.jsonObject
@@ -206,14 +198,14 @@ class Bot {
                         "• $title\n  ↑ $score points | 💬 $numComments comments\n  https://reddit.com$url"
                     } else null
                 } catch (e: Exception) {
-                    println("Error parsing post: ${e.message}") // Debug log
+                    println("Error parsing post: ${e.message}")
                     null
                 }
             }.joinToString("\n\n")
 
             return "Top 10 posts this week from r/$subreddit:\n\n$formattedPosts"
         } catch (e: Exception) {
-            e.printStackTrace() // Add this for debugging
+            e.printStackTrace()
             return "Error fetching posts from Reddit: ${e.message}"
         }
     }
@@ -221,17 +213,27 @@ class Bot {
     /**
      * Handle messages sent to the Hi Town group.
      */
-    suspend fun message(
-        token: String,
-        body: MessageBotBody,
-    ): MessageBotResponse {
+    suspend fun message(token: String, body: MessageBotBody): MessageBotResponse {
         try {
-            // Check if bot is paused for this group
-            if (pausedGroups.contains(token)) {
-                return MessageBotResponse(
-                    success = false,
-                    note = "Bot is currently paused in this group"
+            val groupInstall = groupInstalls[token] ?: return MessageBotResponse(
+                success = false,
+                note = "The bot is not installed in this group."
+            )
+
+            // Create a new mutable list for the context
+            val newContext = groupInstall.context.toMutableList()
+
+            // Save message to context
+            newContext.add(
+                MessageContext(
+                    role = MessageContextRole.User,
+                    body = body
                 )
+            )
+
+            // Keep context size limited
+            if (newContext.size > CONTEXT_SIZE) {
+                newContext.removeFirst()
             }
 
             val message = body.message ?: return MessageBotResponse(
@@ -250,11 +252,22 @@ class Bot {
             val subreddit = if (parts.size > 1) {
                 parts[1].trim()
             } else {
-                // Use default subreddit from config if available
-                groupConfigs[token]?.find { it.key == "subreddit" }?.value ?: "programming"
+                groupInstall.body.config?.find { it.key == "subreddit" }?.value ?: "programming"
             }
 
             val redditContent = fetchRedditPosts(subreddit)
+
+            // Save bot response to context
+            newContext.add(
+                MessageContext(
+                    role = MessageContextRole.Assistant,
+                    body = MessageBotBody(message = redditContent)
+                )
+            )
+
+            // Update the group install with new context
+            groupInstalls[token] = groupInstall.copy(context = newContext)
+            saveState()
 
             return MessageBotResponse(
                 success = true,
@@ -265,7 +278,7 @@ class Bot {
                 )
             )
         } catch (e: Exception) {
-            e.printStackTrace() // Add this for debugging
+            e.printStackTrace()
             return MessageBotResponse(
                 success = false,
                 note = "Error processing message: ${e.message}"
