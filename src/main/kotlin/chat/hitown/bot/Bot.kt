@@ -321,7 +321,7 @@ class Bot {
             println("Request URL: $url")
             
             val response = client.get(url) {
-                header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+                header("User-Agent", "HiTownBot/1.0 (by /u/hitownbot)")
                 header("Accept", "application/json")
                 header("Accept-Language", "en-US,en;q=0.9")
                 header("Connection", "keep-alive")
@@ -334,6 +334,8 @@ class Bot {
             if (response.status.value !in 200..299) {
                 println("Reddit API Error: ${response.status.value}")
                 println("Response Headers: ${response.headers}")
+                val errorBody = response.bodyAsText()
+                println("Error Response Body: $errorBody")
                 return "Error: Reddit API returned status ${response.status.value}. Please try again later."
             }
 
