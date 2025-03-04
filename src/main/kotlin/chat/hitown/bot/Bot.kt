@@ -19,8 +19,14 @@ import kotlinx.serialization.Serializable
 import kotlinx.coroutines.*
 import java.io.File
 import java.util.*
+import io.ktor.client.request.forms.*
+import io.ktor.http.*
+import java.util.Base64
+import kotlinx.serialization.json.jsonObject
 
 private const val INSTALL_SECRET = "hitownbot"
+private const val REDDIT_API_RATE_LIMIT = 1000L // 1 second between requests
+private const val REDDIT_TOKEN_REFRESH_BUFFER = 300000L // Refresh token 5 minutes before expiry
 
 @Serializable
 data class GroupInstall(
@@ -31,12 +37,31 @@ data class GroupInstall(
     val isPaused: Boolean = false
 )
 
+@Serializable
+private data class RedditToken(
+    val access_token: String,
+    val token_type: String,
+    val expires_in: Int,
+    val scope: String
+)
+
+@Serializable
+private data class RedditError(
+    val error: String,
+    val message: String? = null
+)
+
 /**
  * Bot instance.
  */
 val bot = Bot()
 
 class Bot {
+    private val redditClientId = System.getenv("REDDIT_CLIENT_ID") ?: "OuXEbIhZbHzPJYC5W2m1ew"
+    private val redditClientSecret = System.getenv("REDDIT_CLIENT_SECRET") ?: "KURAkvMgqinxDXjudNMOyPgvekj_Bw"
+    private val redditUserAgent = "weekly-summarizer/1.0 (by /u/AcrobaticGroup1639)"
+    private val redditRedirectUri = System.getenv("REDDIT_REDIRECT_URI") ?: "https://hi-town-bot-1.onrender.com"
+    
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
             json(Json {
@@ -64,6 +89,9 @@ class Bot {
 
     private val groupInstalls = mutableMapOf<String, GroupInstall>()
     private val saveFile = File("./bot_state.json")
+    private var redditAccessToken: String? = null
+    private var tokenExpirationTime: Long = 0
+    private var lastRequestTime: Long = 0
 
     init {
         println("=== Bot Initialization ===")
@@ -314,68 +342,144 @@ class Bot {
         }
     }
 
+    private suspend fun getRedditAccessToken(): String {
+        try {
+            val currentTime = System.currentTimeMillis()
+            
+            // Check if current token is still valid (with buffer time for refresh)
+            if (redditAccessToken != null && currentTime < (tokenExpirationTime - REDDIT_TOKEN_REFRESH_BUFFER)) {
+                return redditAccessToken!!
+            }
+
+            println("=== Reddit OAuth2 Token Request ===")
+            println("Previous token expired or close to expiry")
+            
+            // Respect rate limiting
+            val timeSinceLastRequest = currentTime - lastRequestTime
+            if (timeSinceLastRequest < REDDIT_API_RATE_LIMIT) {
+                delay(REDDIT_API_RATE_LIMIT - timeSinceLastRequest)
+            }
+            
+            val auth = Base64.getEncoder().encodeToString("$redditClientId:$redditClientSecret".toByteArray())
+            
+            val response = client.post("https://www.reddit.com/api/v1/access_token") {
+                header("Authorization", "Basic $auth")
+                header("User-Agent", redditUserAgent)
+                
+                setBody(FormDataContent(Parameters.build {
+                    append("grant_type", "client_credentials")
+                    append("redirect_uri", redditRedirectUri)
+                }))
+            }
+
+            lastRequestTime = System.currentTimeMillis()
+
+            if (response.status.value !in 200..299) {
+                val errorBody = response.bodyAsText()
+                try {
+                    val error = Json.decodeFromString<RedditError>(errorBody)
+                    throw Exception("Reddit OAuth2 error: ${error.error} - ${error.message}")
+                } catch (e: Exception) {
+                    throw Exception("Failed to get Reddit access token: ${response.status.value} - $errorBody")
+                }
+            }
+
+            val tokenResponse = Json.decodeFromString<RedditToken>(response.bodyAsText())
+            redditAccessToken = tokenResponse.access_token
+            tokenExpirationTime = System.currentTimeMillis() + (tokenResponse.expires_in * 1000)
+            
+            println("Successfully obtained new Reddit access token")
+            println("Token expires in: ${tokenResponse.expires_in} seconds")
+            println("Scopes granted: ${tokenResponse.scope}")
+            
+            return redditAccessToken!!
+        } catch (e: Exception) {
+            println("Error getting Reddit access token: ${e.message}")
+            println("Stack trace: ${e.stackTraceToString()}")
+            throw e
+        }
+    }
+
     private suspend fun fetchRedditPosts(subreddit: String): String {
         try {
             println("=== Reddit API Request Start ===")
             println("Subreddit: $subreddit")
             
-            // Use the public API endpoint with proper User-Agent
-            val url = "https://www.reddit.com/r/$subreddit/top.json?limit=10&t=week"
+            val accessToken = try {
+                getRedditAccessToken()
+            } catch (e: Exception) {
+                println("Failed to get access token: ${e.message}")
+                return "Error: Unable to authenticate with Reddit API. Please try again later."
+            }
+            
+            val url = "https://oauth.reddit.com/r/$subreddit/top.json?limit=10&t=week"
             println("Request URL: $url")
             
-            // Add delay to respect rate limits
-            delay(1000)
+            // Respect rate limiting
+            val currentTime = System.currentTimeMillis()
+            val timeSinceLastRequest = currentTime - lastRequestTime
+            if (timeSinceLastRequest < REDDIT_API_RATE_LIMIT) {
+                delay(REDDIT_API_RATE_LIMIT - timeSinceLastRequest)
+            }
             
             val response = client.get(url) {
-                // Updated User-Agent format to match Reddit's requirements
-                header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+                header("Authorization", "Bearer $accessToken")
+                header("User-Agent", redditUserAgent)
                 header("Accept", "application/json")
-                header("Accept-Language", "en-US,en;q=0.9")
-                header("Connection", "keep-alive")
             }
 
+            lastRequestTime = System.currentTimeMillis()
             println("Response Status: ${response.status.value}")
-            println("Response Headers: ${response.headers}")
 
-            if (response.status.value == 403) {
-                println("Reddit API 403 Error - Trying alternative URL")
-                // Try alternative URL format
-                val altUrl = "https://old.reddit.com/r/$subreddit/top.json?limit=10&t=week"
-                println("Trying alternative URL: $altUrl")
-                
-                delay(1000) // Add delay before second request
-                
-                val altResponse = client.get(altUrl) {
-                    header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-                    header("Accept", "application/json")
-                    header("Accept-Language", "en-US,en;q=0.9")
-                    header("Connection", "keep-alive")
+            when (response.status.value) {
+                200 -> return processRedditResponse(response.bodyAsText(), subreddit)
+                401, 403 -> {
+                    // Clear token and retry once with fresh token
+                    redditAccessToken = null
+                    tokenExpirationTime = 0
+                    println("Auth failed, retrying with new token...")
+                    
+                    val newToken = getRedditAccessToken()
+                    
+                    // Respect rate limiting before retry
+                    delay(REDDIT_API_RATE_LIMIT)
+                    
+                    val retryResponse = client.get(url) {
+                        header("Authorization", "Bearer $newToken")
+                        header("User-Agent", redditUserAgent)
+                        header("Accept", "application/json")
+                    }
+
+                    lastRequestTime = System.currentTimeMillis()
+
+                    if (retryResponse.status.value == 200) {
+                        return processRedditResponse(retryResponse.bodyAsText(), subreddit)
+                    }
+                    
+                    // Try to parse error response
+                    val errorBody = retryResponse.bodyAsText()
+                    try {
+                        val error = Json.decodeFromString<RedditError>(errorBody)
+                        return "Error: ${error.message ?: error.error}"
+                    } catch (e: Exception) {
+                        return "Error: Unable to access r/$subreddit. The subreddit might be private or restricted."
+                    }
                 }
-
-                if (altResponse.status.value == 403) {
-                    return "Error: Unable to access r/$subreddit. The subreddit might be private or the request was blocked. Please try a different subreddit."
+                404 -> return "Error: Subreddit r/$subreddit not found."
+                429 -> return "Error: Rate limit exceeded. Please try again later."
+                else -> {
+                    val errorBody = response.bodyAsText()
+                    try {
+                        val error = Json.decodeFromString<RedditError>(errorBody)
+                        return "Error: ${error.message ?: error.error}"
+                    } catch (e: Exception) {
+                        return "Error: Reddit API returned status ${response.status.value}. Please try again later."
+                    }
                 }
-
-                if (altResponse.status.value !in 200..299) {
-                    return "Error: Reddit API returned status ${altResponse.status.value}. Please try again later."
-                }
-
-                return processRedditResponse(altResponse.bodyAsText(), subreddit)
             }
-
-            if (response.status.value !in 200..299) {
-                println("Reddit API Error: ${response.status.value}")
-                println("Response Headers: ${response.headers}")
-                val errorBody = response.bodyAsText()
-                println("Error Response Body: $errorBody")
-                return "Error: Reddit API returned status ${response.status.value}. Please try again later."
-            }
-
-            return processRedditResponse(response.bodyAsText(), subreddit)
         } catch (e: Exception) {
             e.printStackTrace()
             println("Error in fetchRedditPosts: ${e.message}")
-            println("Stack trace: ${e.stackTraceToString()}")
             return "Error fetching posts from Reddit: ${e.message}. Please try again later."
         }
     }
