@@ -551,14 +551,14 @@ class Bot {
                     // Format the post with more details and better visibility
                     val formattedPost = buildString {
                         // Title with emoji
-                        append("📌 $title\n")
+                        append("## 📌 $title\n\n")
                         
                         // Stats line with emojis
                         append("📊 Stats: ")
                         append("↑ $score points | ")
                         append("💬 ${numComments ?: 0} comments | ")
                         append("👤 ${author ?: "deleted"} | ")
-                        append("⏰ $timeAgo\n")
+                        append("⏰ $timeAgo\n\n")
                         
                         // Content preview for self posts
                         if (isSelf && !selftext.isNullOrBlank()) {
