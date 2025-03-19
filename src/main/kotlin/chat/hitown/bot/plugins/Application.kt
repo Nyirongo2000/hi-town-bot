@@ -23,17 +23,31 @@ import java.util.*
 import kotlinx.coroutines.*
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import io.ktor.client.*
+import io.ktor.client.request.*
+import io.ktor.client.engine.cio.*
 
 fun main() {
-    // A coroutine scope for our keep-alive mechanism
     val keepAliveScope = CoroutineScope(Dispatchers.Default + Job())
+    
+    // Create an HTTP client for self-pinging
+    val client = HttpClient(CIO)
+    
+    // Your specific bot URL
+    val appUrl = "https://hi-town-bot-1.onrender.com"
     
     // Start the keep-alive coroutine
     keepAliveScope.launch {
         while (true) {
-            val currentTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-            println("Keep-alive ping at: $currentTime")
-            delay(900000) // 15 minutes in milliseconds
+            try {
+                val currentTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                // Make an HTTP request to your bot's root endpoint
+                client.get(appUrl) 
+                println("Keep-alive HTTP ping successful at: $currentTime")
+            } catch (e: Exception) {
+                println("Keep-alive ping failed: ${e.message}")
+            }
+            delay(840000) // 14 minutes in milliseconds
         }
     }
 
