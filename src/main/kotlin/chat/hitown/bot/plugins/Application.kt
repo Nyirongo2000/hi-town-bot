@@ -20,8 +20,23 @@ import io.ktor.server.plugins.defaultheaders.*
 import org.slf4j.event.Level
 import kotlinx.serialization.json.Json
 import java.util.*
+import kotlinx.coroutines.*
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 fun main() {
+    // A coroutine scope for our keep-alive mechanism
+    val keepAliveScope = CoroutineScope(Dispatchers.Default + Job())
+    
+    // Start the keep-alive coroutine
+    keepAliveScope.launch {
+        while (true) {
+            val currentTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+            println("Keep-alive ping at: $currentTime")
+            delay(900000) // 15 minutes in milliseconds
+        }
+    }
+
     embeddedServer(
         factory = Netty,
         port = System.getenv("PORT")?.toIntOrNull() ?: 8080,
