@@ -30,7 +30,7 @@ import io.ktor.client.engine.cio.*
 fun main() {
     val keepAliveScope = CoroutineScope(Dispatchers.Default + Job())
     
-    // Create an HTTP client for self-pinging
+    // HTTP client for self-pinging
     val client = HttpClient(CIO)
     
     // Your specific bot URL
